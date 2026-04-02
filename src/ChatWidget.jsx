@@ -710,9 +710,9 @@ function handleSend() {
     <>
       <div className={`
         fixed bottom-24 right-6 z-[9998]
-        w-[380px] h-[580px]
-        bg-[#0d0d12] border border-white/[0.07]
-        rounded-[20px] flex flex-col overflow-hidden
+  w-[380px] h-[580px]
+  bg-[#0d0d12] border border-white/[0.07]
+  rounded-[20px] flex flex-col min-h-0 overflow-hidden
         shadow-[0_24px_80px_rgba(0,0,0,0.7),0_4px_20px_rgba(0,0,0,0.4)]
         transition-all duration-200
         ${open ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-3 scale-[0.97] pointer-events-none'}
@@ -741,7 +741,7 @@ function handleSend() {
           <div
     ref={messagesContainerRef}
     onScroll={handleMessagesScroll}
-    className="flex-1 overflow-y-auto vw-scroll px-3.5 py-4 flex flex-col gap-3"
+  className="min-h-0 flex-1 overflow-y-auto vw-scroll px-3.5 py-4 flex flex-col gap-3"
   >
             {grouped.map((g, i) => (
               <Message
