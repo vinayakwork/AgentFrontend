@@ -1,0 +1,1449 @@
+// // // // import { useState, useCallback, useRef } from 'react'
+
+// // // // // ── Session ───────────────────────────────────────────────────────────────────
+// // // // const SESSION_KEY = 'vapr_sid'
+
+// // // // function getSessionId() {
+// // // //   let id = localStorage.getItem(SESSION_KEY)
+// // // //   if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
+// // // //   return id
+// // // // }
+
+// // // // // ── Parse Vapr events ─────────────────────────────────────────────────────────
+// // // // // Handles both formats:
+// // // // //   /vapr_agent  → flat:   { type, "User Request", ... }
+// // // // //   /chat_history → nested: { event_type, event_data: {...}, timestamp, agent }
+// // // // export function parseVaprEvents(events = []) {
+// // // //   const out = []
+// // // //   for (const raw of events) {
+// // // //     const e     = raw.event_data || raw
+// // // //     const type  = raw.event_type || e.type
+// // // //     const ts    = raw.timestamp  || e.timestamp
+// // // //     const agent = raw.agent      || e.agent
+
+// // // //     switch (type) {
+// // // //       case 'user_request':
+// // // //         out.push({ id: `${ts}-u`, role: 'user', content: e['User Request'], ts })
+// // // //         break
+
+// // // //       case 'tool_call':
+// // // //         out.push({ id: `${ts}-tc`, role: 'tool_call',
+// // // //           toolName: e['Tool Request Name'], toolArgs: e['Tool Request Arguments'],
+// // // //           agent, ts })
+// // // //         break
+
+// // // //       case 'tool_response':
+// // // //         out.push({ id: `${ts}-tr`, role: 'tool_response',
+// // // //           toolResponse: e['Tool Response'], agent, ts })
+// // // //         break
+
+// // // //       case 'agent_response':
+// // // //         if (agent === 'orchestrator') {
+// // // //           // Unwrap JSON-encoded string and normalise \n
+// // // //           let text = e['Agent Response'] || ''
+// // // //           try {
+// // // //             const t = text.trim()
+// // // //             if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
+// // // //           } catch (_) {}
+// // // //           text = text.replace(/\\n/g, '\n').trim()
+// // // //           if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
+// // // //         }
+// // // //         break
+
+// // // //       case 'error':
+// // // //         out.push({ id: `${ts}-err`, role: 'error', content: e.error, ts })
+// // // //         break
+// // // //     }
+// // // //   }
+// // // //   return out
+// // // // }
+
+// // // // // ── Hook ──────────────────────────────────────────────────────────────────────
+// // // // export function useVapr({ vaprUrl, token }) {
+// // // //   const [messages,      setMessages]      = useState([])
+// // // //   const [suggestions,   setSuggestions]   = useState([])
+// // // //   const [isLoading,     setIsLoading]     = useState(false)
+// // // //   const [sessionId,     setSessionId]     = useState(getSessionId)
+// // // //   const [sessionTitle,  setSessionTitle]  = useState(null)
+// // // //   const [error,         setError]         = useState(null)
+
+// // // //   // Use refs to avoid stale closures and prevent duplicate sends
+// // // //   const isLoadingRef  = useRef(false)
+// // // //   const sessionIdRef  = useRef(sessionId)
+
+// // // //   // ── Send message ─────────────────────────────────────────────────────────────
+// // // //   const sendMessage = useCallback(async (text) => {
+// // // //     if (!text.trim() || isLoadingRef.current) return
+// // // //     isLoadingRef.current = true
+// // // //     setError(null)
+// // // //     setIsLoading(true)
+
+// // // //     const thinkId = `think-${Date.now()}`
+// // // //     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+// // // //     setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+// // // //     try {
+// // // //       const res = await fetch(`${vaprUrl}/vapr_agent`, {
+// // // //         method: 'POST',
+// // // //         headers: {
+// // // //           'Content-Type': 'application/json',
+// // // //           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+// // // //         },
+// // // //         body: JSON.stringify({ query: text, session_id: sessionIdRef.current }),
+// // // //       })
+// // // //       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+// // // //       const data = await res.json()
+// // // //       if (data.session_id) {
+// // // //         sessionIdRef.current = data.session_id
+// // // //         setSessionId(data.session_id)
+// // // //         localStorage.setItem(SESSION_KEY, data.session_id)
+// // // //       }
+// // // //       if (data.title) setSessionTitle(data.title)
+
+// // // //       // Replace all messages with the full parsed response from Vapr
+// // // //       const parsed = parseVaprEvents(data.response || [])
+// // // //       setMessages(parsed)
+// // // //     } catch (err) {
+// // // //       setError(err.message)
+// // // //       setMessages(prev => [
+// // // //         ...prev.filter(m => m.id !== thinkId),
+// // // //         { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+// // // //       ])
+// // // //     } finally {
+// // // //       isLoadingRef.current = false
+// // // //       setIsLoading(false)
+// // // //     }
+// // // //   }, [vaprUrl, token])
+
+// // // //   // ── Load suggestions ─────────────────────────────────────────────────────────
+// // // //   const loadSuggestions = useCallback(async (screen = 'home') => {
+// // // //     try {
+// // // //       const res = await fetch(`${vaprUrl}/get_suggestions`, {
+// // // //         method: 'POST', headers,
+// // // //         body: JSON.stringify({ current_screen: screen }),
+// // // //       })
+// // // //       if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+// // // //     } catch {
+// // // //       setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+// // // //     }
+// // // //   }, [vaprUrl, token])
+
+// // // //   // ── Load chat history ────────────────────────────────────────────────────────
+// // // //   const loadHistory = useCallback(async (sid) => {
+// // // //     try {
+// // // //       const res = await fetch(`${vaprUrl}/chat_history`, {
+// // // //         method: 'POST', headers,
+// // // //         body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+// // // //       })
+// // // //       if (res.ok) {
+// // // //         const data = await res.json()
+// // // //         const parsed = parseVaprEvents(data.events || [])
+// // // //         if (parsed.length > 0) setMessages(parsed)
+// // // //       }
+// // // //     } catch (_) {}
+// // // //   }, [vaprUrl, token])
+
+// // // //   // ── New chat ─────────────────────────────────────────────────────────────────
+// // // //   const newChat = useCallback(() => {
+// // // //     const id = crypto.randomUUID()
+// // // //     localStorage.setItem(SESSION_KEY, id)
+// // // //     setSessionId(id)
+// // // //     setMessages([])
+// // // //     setSessionTitle(null)
+// // // //     setError(null)
+// // // //   }, [])
+
+// // // //   return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+// // // //            sendMessage, loadSuggestions, loadHistory, newChat }
+// // // // }
+
+// // // import { useState, useCallback, useRef } from 'react'
+
+// // // // ── Session ───────────────────────────────────────────────────────────────────
+// // // const SESSION_KEY = 'vapr_sid'
+
+// // // function getSessionId() {
+// // //   let id = localStorage.getItem(SESSION_KEY)
+// // //   if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
+// // //   return id
+// // // }
+
+// // // // ── Parse Vapr events ─────────────────────────────────────────────────────────
+// // // // Handles both formats:
+// // // //   /vapr_agent  → flat:   { type, "User Request", ... }
+// // // //   /chat_history → nested: { event_type, event_data: {...}, timestamp, agent }
+// // // export function parseVaprEvents(events = []) {
+// // //   const out = []
+// // //   for (const raw of events) {
+// // //     const e     = raw.event_data || raw
+// // //     const type  = raw.event_type || e.type
+// // //     const ts    = raw.timestamp  || e.timestamp
+// // //     const agent = raw.agent      || e.agent
+
+// // //     switch (type) {
+// // //       case 'user_request':
+// // //         out.push({ id: `${ts}-u`, role: 'user', content: e['User Request'], ts })
+// // //         break
+
+// // //       case 'tool_call':
+// // //         out.push({ id: `${ts}-tc`, role: 'tool_call',
+// // //           toolName: e['Tool Request Name'], toolArgs: e['Tool Request Arguments'],
+// // //           agent, ts })
+// // //         break
+
+// // //       case 'tool_response':
+// // //         out.push({ id: `${ts}-tr`, role: 'tool_response',
+// // //           toolResponse: e['Tool Response'], agent, ts })
+// // //         break
+
+// // //       case 'agent_response': {
+// // //         // Accept from orchestrator OR any top-level agent (booking, condense, etc.)
+// // //         let text = e['Agent Response'] || ''
+// // //         try {
+// // //           const t = text.trim()
+// // //           if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
+// // //         } catch (_) {}
+// // //         text = text.replace(/\\n/g, '\n').trim()
+// // //         if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
+// // //         break
+// // //       }
+
+// // //       case 'error':
+// // //         out.push({ id: `${ts}-err`, role: 'error', content: e.error, ts })
+// // //         break
+// // //     }
+// // //   }
+// // //   return out
+// // // }
+
+// // // // ── Hook ──────────────────────────────────────────────────────────────────────
+// // // export function useVapr({ vaprUrl, token }) {
+// // //   const [messages,      setMessages]      = useState([])
+// // //   const [suggestions,   setSuggestions]   = useState([])
+// // //   const [isLoading,     setIsLoading]     = useState(false)
+// // //   const [sessionId,     setSessionId]     = useState(getSessionId)
+// // //   const [sessionTitle,  setSessionTitle]  = useState(null)
+// // //   const [error,         setError]         = useState(null)
+
+// // //   // Use refs to avoid stale closures and prevent duplicate sends
+// // //   const isLoadingRef  = useRef(false)
+// // //   const sessionIdRef  = useRef(sessionId)
+
+// // //   // ── Send message ─────────────────────────────────────────────────────────────
+// // //   const sendMessage = useCallback(async (text) => {
+// // //     if (!text.trim() || isLoadingRef.current) return
+// // //     isLoadingRef.current = true
+// // //     setError(null)
+// // //     setIsLoading(true)
+
+// // //     const thinkId = `think-${Date.now()}`
+// // //     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+// // //     setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+// // //     try {
+// // //       const res = await fetch(`${vaprUrl}/vapr_agent`, {
+// // //         method: 'POST',
+// // //         headers: {
+// // //           'Content-Type': 'application/json',
+// // //           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+// // //         },
+// // //         body: JSON.stringify({ query: text, session_id: sessionIdRef.current }),
+// // //       })
+// // //       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+// // //       const data = await res.json()
+// // //       if (data.session_id) {
+// // //         sessionIdRef.current = data.session_id
+// // //         setSessionId(data.session_id)
+// // //         localStorage.setItem(SESSION_KEY, data.session_id)
+// // //       }
+// // //       if (data.title) setSessionTitle(data.title)
+
+// // //       // Replace all messages with the full parsed response from Vapr
+// // //       const parsed = parseVaprEvents(data.response || [])
+// // //       setMessages(parsed)
+// // //     } catch (err) {
+// // //       setError(err.message)
+// // //       setMessages(prev => [
+// // //         ...prev.filter(m => m.id !== thinkId),
+// // //         { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+// // //       ])
+// // //     } finally {
+// // //       isLoadingRef.current = false
+// // //       setIsLoading(false)
+// // //     }
+// // //   }, [vaprUrl, token])
+
+// // //   // ── Load suggestions ─────────────────────────────────────────────────────────
+// // //   const loadSuggestions = useCallback(async (screen = 'home') => {
+// // //     try {
+// // //       const res = await fetch(`${vaprUrl}/get_suggestions`, {
+// // //         method: 'POST', headers,
+// // //         body: JSON.stringify({ current_screen: screen }),
+// // //       })
+// // //       if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+// // //     } catch {
+// // //       setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+// // //     }
+// // //   }, [vaprUrl, token])
+
+// // //   // ── Load chat history ────────────────────────────────────────────────────────
+// // //   const loadHistory = useCallback(async (sid) => {
+// // //     try {
+// // //       const res = await fetch(`${vaprUrl}/chat_history`, {
+// // //         method: 'POST', headers,
+// // //         body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+// // //       })
+// // //       if (res.ok) {
+// // //         const data = await res.json()
+// // //         const parsed = parseVaprEvents(data.events || [])
+// // //         if (parsed.length > 0) setMessages(parsed)
+// // //       }
+// // //     } catch (_) {}
+// // //   }, [vaprUrl, token])
+
+// // //   // ── New chat ─────────────────────────────────────────────────────────────────
+// // //   const newChat = useCallback(() => {
+// // //     const id = crypto.randomUUID()
+// // //     localStorage.setItem(SESSION_KEY, id)
+// // //     setSessionId(id)
+// // //     setMessages([])
+// // //     setSessionTitle(null)
+// // //     setError(null)
+// // //   }, [])
+
+// // //   return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+// // //            sendMessage, loadSuggestions, loadHistory, newChat }
+// // // }
+// // import { useState, useCallback, useRef } from 'react'
+
+// // // ── Session ───────────────────────────────────────────────────────────────────
+// // const SESSION_KEY = 'vapr_sid'
+
+// // function getSessionId() {
+// //   let id = localStorage.getItem(SESSION_KEY)
+// //   if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
+// //   return id
+// // }
+
+// // // ── Parse Vapr events ─────────────────────────────────────────────────────────
+// // // Handles both formats:
+// // //   /vapr_agent  → flat:   { type, "User Request", ... }
+// // //   /chat_history → nested: { event_type, event_data: {...}, timestamp, agent }
+// // export function parseVaprEvents(events = []) {
+// //   const out = []
+// //   for (const raw of events) {
+// //     const e     = raw.event_data || raw
+// //     const type  = raw.event_type || e.type
+// //     const ts    = raw.timestamp  || e.timestamp
+// //     const agent = raw.agent      || e.agent
+
+// //     switch (type) {
+// //       case 'user_request':
+// //         out.push({ id: `${ts}-u`, role: 'user', content: e['User Request'], ts })
+// //         break
+
+// //       case 'tool_call':
+// //         out.push({ id: `${ts}-tc`, role: 'tool_call',
+// //           toolName: e['Tool Request Name'], toolArgs: e['Tool Request Arguments'],
+// //           agent, ts })
+// //         break
+
+// //       case 'tool_response':
+// //         out.push({ id: `${ts}-tr`, role: 'tool_response',
+// //           toolResponse: e['Tool Response'], agent, ts })
+// //         break
+
+// //       case 'agent_response': {
+// //         // Only use orchestrator's final response — it has the polished answer
+// //         // Sub-agent responses (booking_agent, condense_agent) are raw tool output
+// //         if (agent === 'orchestrator') {
+// //           let text = e['Agent Response'] || ''
+// //           try {
+// //             const t = text.trim()
+// //             if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
+// //           } catch (_) {}
+// //           text = text.replace(/\\n/g, '\n').trim()
+// //           if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
+// //         }
+// //         break
+// //       }
+
+// //       case 'error':
+// //         out.push({ id: `${ts}-err`, role: 'error', content: e.error, ts })
+// //         break
+// //     }
+// //   }
+// //   return out
+// // }
+
+// // // ── Hook ──────────────────────────────────────────────────────────────────────
+// // export function useVapr({ vaprUrl, token }) {
+// //   const [messages,      setMessages]      = useState([])
+// //   const [suggestions,   setSuggestions]   = useState([])
+// //   const [isLoading,     setIsLoading]     = useState(false)
+// //   const [sessionId,     setSessionId]     = useState(getSessionId)
+// //   const [sessionTitle,  setSessionTitle]  = useState(null)
+// //   const [error,         setError]         = useState(null)
+
+// //   // Use refs to avoid stale closures and prevent duplicate sends
+// //   const isLoadingRef  = useRef(false)
+// //   const sessionIdRef  = useRef(sessionId)
+
+// //   // ── Send message ─────────────────────────────────────────────────────────────
+// //   const sendMessage = useCallback(async (text) => {
+// //     if (!text.trim() || isLoadingRef.current) return
+// //     isLoadingRef.current = true
+// //     setError(null)
+// //     setIsLoading(true)
+
+// //     const thinkId = `think-${Date.now()}`
+// //     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+// //     setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+// //     try {
+// //       const res = await fetch(`${vaprUrl}/vapr_agent`, {
+// //         method: 'POST',
+// //         headers: {
+// //           'Content-Type': 'application/json',
+// //           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+// //         },
+// //         body: JSON.stringify({ query: text, session_id: sessionIdRef.current }),
+// //       })
+// //       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+// //       const data = await res.json()
+// //       if (data.session_id) {
+// //         sessionIdRef.current = data.session_id
+// //         setSessionId(data.session_id)
+// //         localStorage.setItem(SESSION_KEY, data.session_id)
+// //       }
+// //       if (data.title) setSessionTitle(data.title)
+
+// //       // Replace all messages with the full parsed response from Vapr
+// //       const parsed = parseVaprEvents(data.response || [])
+// //       setMessages(parsed)
+// //     } catch (err) {
+// //       setError(err.message)
+// //       setMessages(prev => [
+// //         ...prev.filter(m => m.id !== thinkId),
+// //         { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+// //       ])
+// //     } finally {
+// //       isLoadingRef.current = false
+// //       setIsLoading(false)
+// //     }
+// //   }, [vaprUrl, token])
+
+// //   // ── Load suggestions ─────────────────────────────────────────────────────────
+// //   const loadSuggestions = useCallback(async (screen = 'home') => {
+// //     try {
+// //       const res = await fetch(`${vaprUrl}/get_suggestions`, {
+// //         method: 'POST', headers,
+// //         body: JSON.stringify({ current_screen: screen }),
+// //       })
+// //       if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+// //     } catch {
+// //       setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+// //     }
+// //   }, [vaprUrl, token])
+
+// //   // ── Load chat history ────────────────────────────────────────────────────────
+// //   const loadHistory = useCallback(async (sid) => {
+// //     try {
+// //       const res = await fetch(`${vaprUrl}/chat_history`, {
+// //         method: 'POST', headers,
+// //         body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+// //       })
+// //       if (res.ok) {
+// //         const data = await res.json()
+// //         const parsed = parseVaprEvents(data.events || [])
+// //         if (parsed.length > 0) setMessages(parsed)
+// //       }
+// //     } catch (_) {}
+// //   }, [vaprUrl, token])
+
+// //   // ── New chat ─────────────────────────────────────────────────────────────────
+// //   const newChat = useCallback(() => {
+// //     const id = crypto.randomUUID()
+// //     localStorage.setItem(SESSION_KEY, id)
+// //     setSessionId(id)
+// //     setMessages([])
+// //     setSessionTitle(null)
+// //     setError(null)
+// //   }, [])
+
+// //   return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+// //            sendMessage, loadSuggestions, loadHistory, newChat }
+// // }
+// import { useState, useCallback, useRef } from 'react'
+
+// const SESSION_KEY = 'vapr_sid'
+
+// // function getSessionId() {
+// //   let id = localStorage.getItem(SESSION_KEY)
+// //   if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
+// //   return id
+// // }
+// function getSessionId() {
+//   // 1. Check if we already saved an ID in this browser session
+//   let id = localStorage.getItem(SESSION_KEY);
+//   if (id) return id;
+
+//   // 2. If not, try to "grab" the Google Analytics ID from the cookies
+//   // This satisfies your mentor's requirement to "map sessions from cookies"
+//   const match = document.cookie.match(/_ga=([^;]+)/);
+//   if (match) {
+//     const parts = match[1].split('.');
+//     // Turns "GA1.1.12345.678" into "12345.678"
+//     id = parts.length >= 2 ? parts.slice(-2).join('.') : match[1];
+//   }
+
+//   // 3. Fallback: if the user blocked cookies, generate a random one
+//   if (!id) {
+//     id = crypto.randomUUID();
+//   }
+
+//   // Save it so the ID doesn't change when they refresh the page
+//   localStorage.setItem(SESSION_KEY, id);
+//   return id;
+// }
+
+
+// // ── Parse Vapr events ─────────────────────────────────────────────────────────
+// export function parseVaprEvents(events = []) {
+//   const out = []
+//   for (const raw of events) {
+//     // /chat_history → { event_type, event_data:{...}, timestamp, agent }
+//     // /vapr_agent   → flat { type, "User Request", ... }
+//     const e     = raw.event_data || raw
+//     const type  = raw.event_type || e.type
+//     const ts    = raw.timestamp  || e.timestamp
+//     // For agent field: prefer event_data.agent (actual responder) over top-level
+//     const agent = e.agent || raw.agent
+
+//     switch (type) {
+//       case 'user_request':
+//         out.push({ id: `${ts}-u`, role: 'user', content: e['User Request'], ts })
+//         break
+
+//       case 'tool_call':
+//         out.push({ id: `${ts}-tc`, role: 'tool_call',
+//           toolName: e['Tool Request Name'],
+//           toolArgs: e['Tool Request Arguments'],
+//           agent, ts })
+//         break
+
+//       case 'tool_response':
+//         out.push({ id: `${ts}-tr`, role: 'tool_response',
+//           toolResponse: e['Tool Response'], agent, ts })
+//         break
+
+//       case 'agent_response': {
+//         // Use orchestrator responses only — they contain the final polished reply
+//         // Sub-agents (booking_agent, condense_agent) have is_subagent: true
+//         const isSubagent = e.is_subagent === true
+//         if (!isSubagent) {
+//           let text = e['Agent Response'] || ''
+//           // Unwrap JSON-encoded string
+//           try {
+//             const t = text.trim()
+//             if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
+//           } catch (_) {}
+//           // Normalise escaped newlines
+//           text = text.replace(/\\n/g, '\n').trim()
+//           if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
+//         }
+//         break
+//       }
+
+//       case 'error':
+//         out.push({ id: `${ts}-err`, role: 'error', content: e.error, ts })
+//         break
+//     }
+//   }
+
+//   // Debug — remove after testing
+//   console.log('[parseVaprEvents] input:', events.length, 'output:', out.length)
+//   console.log('[parseVaprEvents] agent_responses:', events.filter(r => (r.event_type||r.type) === 'agent_response').map(r => ({
+//     agent: (r.event_data||r).agent,
+//     is_subagent: (r.event_data||r).is_subagent,
+//     text: ((r.event_data||r)['Agent Response']||'').slice(0,60)
+//   })))
+
+//   return out
+// }
+
+// // ── Hook ──────────────────────────────────────────────────────────────────────
+// export function useVapr({ vaprUrl, token }) {
+//   const [messages,     setMessages]     = useState([])
+//   const [suggestions,  setSuggestions]  = useState([])
+//   const [isLoading,    setIsLoading]    = useState(false)
+//   const [sessionId,    setSessionId]    = useState(getSessionId)
+//   const [sessionTitle, setSessionTitle] = useState(null)
+//   const [error,        setError]        = useState(null)
+
+//   const isLoadingRef = useRef(false)
+//   const sessionIdRef = useRef(sessionId)
+
+//   function makeHeaders() {
+//     return {
+//       'Content-Type': 'application/json',
+//       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+//     }
+//   }
+
+//   // ── Send message ─────────────────────────────────────────────────────────────
+//   const sendMessage = useCallback(async (text) => {
+//     if (!text.trim() || isLoadingRef.current) return
+//     isLoadingRef.current = true
+//     setError(null)
+//     setIsLoading(true)
+
+//     const thinkId = `think-${Date.now()}`
+//     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+//     setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+//     try {
+//       const res = await fetch(`${vaprUrl}/vapr_agent`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({ query: text, session_id: sessionIdRef.current }),
+//       })
+//       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+//       const data = await res.json()
+//       if (data.session_id) {
+//         sessionIdRef.current = data.session_id
+//         setSessionId(data.session_id)
+//         localStorage.setItem(SESSION_KEY, data.session_id)
+//       }
+//       if (data.title) setSessionTitle(data.title)
+
+//       const parsed = parseVaprEvents(data.response || [])
+//       setMessages(parsed)
+//     } catch (err) {
+//       setError(err.message)
+//       setMessages(prev => [
+//         ...prev.filter(m => m.id !== thinkId),
+//         { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+//       ])
+//     } finally {
+//       isLoadingRef.current = false
+//       setIsLoading(false)
+//     }
+//   }, [vaprUrl, token])
+
+//   // ── Load suggestions ─────────────────────────────────────────────────────────
+//   const loadSuggestions = useCallback(async (screen = 'home') => {
+//     try {
+//       const res = await fetch(`${vaprUrl}/get_suggestions`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({ current_screen: screen }),
+//       })
+//       if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+//     } catch {
+//       setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+//     }
+//   }, [vaprUrl, token])
+
+//   // ── Load chat history ────────────────────────────────────────────────────────
+//   const loadHistory = useCallback(async (sid) => {
+//     try {
+//       const res = await fetch(`${vaprUrl}/chat_history`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+//       })
+//       if (res.ok) {
+//         const data = await res.json()
+//         const parsed = parseVaprEvents(data.events || [])
+//         if (parsed.length > 0) setMessages(parsed)
+//       }
+//     } catch (_) {}
+//   }, [vaprUrl, token])
+
+//   // ── New chat ─────────────────────────────────────────────────────────────────
+//   const newChat = useCallback(() => {
+//     const id = crypto.randomUUID()
+//     localStorage.setItem(SESSION_KEY, id)
+//     sessionIdRef.current = id
+//     setSessionId(id)
+//     setMessages([])
+//     setSessionTitle(null)
+//     setError(null)
+//   }, [])
+
+//   return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+//            sendMessage, loadSuggestions, loadHistory, newChat }
+// }
+
+import { useState, useCallback, useRef } from 'react'
+import { getUserTimeZone } from './utils/timezone';
+const SESSION_KEY = 'vapr_sid'
+
+function getSessionId() {
+  let id = localStorage.getItem(SESSION_KEY)
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
+  return id
+}
+
+// ── Parse Vapr events ─────────────────────────────────────────────────────────
+export function parseVaprEvents(events = []) {
+  const out = []
+  for (const raw of events) {
+    // /chat_history → { event_type, event_data:{...}, timestamp, agent }
+    // /vapr_agent   → flat { type, "User Request", ... }
+    const e     = raw.event_data || raw
+    const type  = raw.event_type || e.type
+    const ts    = raw.timestamp  || e.timestamp
+    // For agent field: prefer event_data.agent (actual responder) over top-level
+    const agent = e.agent || raw.agent
+
+    switch (type) {
+      case 'user_request':
+        out.push({ id: `${ts}-u`, role: 'user', content: e['User Request'], ts })
+        break
+
+      case 'tool_call':
+      case 'tool_response':
+        break
+
+      case 'agent_response': {
+        // Use orchestrator responses only — they contain the final polished reply
+        // Sub-agents (booking_agent, condense_agent) have is_subagent: true
+        const isSubagent = e.is_subagent === true
+        if (!isSubagent) {
+          let text = e['Agent Response'] || ''
+          // Unwrap JSON-encoded string
+          try {
+            const t = text.trim()
+            if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
+          } catch (_) {}
+          // Normalise escaped newlines
+          text = text.replace(/\\n/g, '\n').trim()
+          if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
+        }
+        break
+      }
+
+      case 'error':
+        out.push({ id: `${ts}-err`, role: 'error', content: e.error, ts })
+        break
+    }
+  }
+
+  return out
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
+// export function useVapr({ vaprUrl, token }) {
+//   const [messages,     setMessages]     = useState([])
+//   const [suggestions,  setSuggestions]  = useState([])
+//   const [isLoading,    setIsLoading]    = useState(false)
+//   const [sessionId,    setSessionId]    = useState(getSessionId)
+//   const [sessionTitle, setSessionTitle] = useState(null)
+//   const [error,        setError]        = useState(null)
+
+//   const isLoadingRef = useRef(false)
+//   const sessionIdRef = useRef(sessionId)
+
+//   function makeHeaders() {
+//     return {
+//       'Content-Type': 'application/json',
+//       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+//     }
+//   }
+
+//   // ── Send message ─────────────────────────────────────────────────────────────
+//   const sendMessage = useCallback(async (text) => {
+//     if (!text.trim() || isLoadingRef.current) return
+//     isLoadingRef.current = true
+//     setError(null)
+//     setIsLoading(true)
+
+//     const thinkId = `think-${Date.now()}`
+//     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+//     setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+//     try {
+//       const res = await fetch(`${vaprUrl}/vapr_agent`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({
+//           query: text,
+//           session_id: sessionIdRef.current,
+//            extra: (() => {
+//             const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+//             // Get full timezone name e.g. "India Standard Time"
+//             const tzName = new Intl.DateTimeFormat('en-IN', {
+//               timeZone: tz,
+//               timeZoneName: 'long'
+//             }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value || tz
+//             return {
+//               current_datetime: new Date().toLocaleString('en-IN', {
+//                 timeZone: tz,
+//                 weekday: 'long',
+//                 year: 'numeric',
+//                 month: 'long',
+//                 day: 'numeric',
+//                 hour: '2-digit',
+//                 minute: '2-digit',
+//                 hour12: true
+//               }),
+//               timezone: tzName,
+//               timezone_id: tz,
+//               date_iso: new Date().toISOString(),
+//             }
+//           })()
+//         }),
+//       })
+//       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+//       const data = await res.json()
+//       if (data.session_id) {
+//         sessionIdRef.current = data.session_id
+//         setSessionId(data.session_id)
+//         localStorage.setItem(SESSION_KEY, data.session_id)
+//       }
+//       if (data.title) setSessionTitle(data.title)
+
+//       const parsed = parseVaprEvents(data.response || [])
+//       setMessages(parsed)
+//     } catch (err) {
+//       setError(err.message)
+//       setMessages(prev => [
+//         ...prev.filter(m => m.id !== thinkId),
+//         { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+//       ])
+//     } finally {
+//       isLoadingRef.current = false
+//       setIsLoading(false)
+//     }
+//   }, [vaprUrl, token])
+
+//   // ── Load suggestions ─────────────────────────────────────────────────────────
+//   const loadSuggestions = useCallback(async (screen = 'home') => {
+//     try {
+//       const res = await fetch(`${vaprUrl}/get_suggestions`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({ current_screen: screen }),
+//       })
+//       if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+//     } catch {
+//       setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+//     }
+//   }, [vaprUrl, token])
+
+//   // ── Load chat history ────────────────────────────────────────────────────────
+//   const loadHistory = useCallback(async (sid) => {
+//     try {
+//       const res = await fetch(`${vaprUrl}/chat_history`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+//       })
+//       if (res.ok) {
+//         const data = await res.json()
+//         const parsed = parseVaprEvents(data.events || [])
+//         if (parsed.length > 0) setMessages(parsed)
+//       }
+//     } catch (_) {}
+//   }, [vaprUrl, token])
+
+//   // ── New chat ─────────────────────────────────────────────────────────────────
+//   const newChat = useCallback(() => {
+//     const id = crypto.randomUUID()
+//     localStorage.setItem(SESSION_KEY, id)
+//     sessionIdRef.current = id
+//     setSessionId(id)
+//     setMessages([])
+//     setSessionTitle(null)
+//     setError(null)
+//   }, [])
+
+//   return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+//            sendMessage, loadSuggestions, loadHistory, newChat }
+// }
+// export function useVapr({ vaprUrl, token }) {
+//   const [messages,     setMessages]     = useState([])
+//   const [suggestions,  setSuggestions]  = useState([])
+//   const [isLoading,    setIsLoading]    = useState(false)
+//   const [sessionId,    setSessionId]    = useState(getSessionId)
+//   const [sessionTitle, setSessionTitle] = useState(null)
+//   const [error,        setError]        = useState(null)
+
+//   const isLoadingRef = useRef(false)
+//   const sessionIdRef = useRef(sessionId)
+
+//   function makeHeaders() {
+//     return {
+//       'Content-Type': 'application/json',
+//       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+//     }
+//   }
+
+//   // ── Send message ─────────────────────────────────────────────────────────────
+//   const sendMessage = useCallback(async (text) => {
+//     if (!text.trim() || isLoadingRef.current) return
+//     isLoadingRef.current = true
+//     setError(null)
+//     setIsLoading(true)
+
+//     const thinkId = `think-${Date.now()}`
+//     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+//     setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+//     try {
+//       const res = await fetch(`${vaprUrl}/vapr_agent`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({
+//           query: text,
+//           session_id: sessionIdRef.current,
+//           extra: (() => {
+//             const now = new Date()
+//             const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+//             const tzName = new Intl.DateTimeFormat('en-IN', {
+//               timeZone: tz, timeZoneName: 'long'
+//             }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value || tz
+
+//             // Pre-compute tomorrow and day-after in ISO so agent doesn't need to calculate
+//             const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1)
+//             const dayAfter  = new Date(now); dayAfter.setDate(now.getDate() + 2)
+
+//             // Helper: build ISO string for a given date at a given HH:MM in local tz
+//             function toLocalISO(date) {
+//               // Offset in minutes
+//               const off = -date.getTimezoneOffset()
+//               const sign = off >= 0 ? '+' : '-'
+//               const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0')
+//               const mm = String(Math.abs(off) % 60).padStart(2, '0')
+//               const pad = n => String(n).padStart(2, '0')
+//               return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}` +
+//                      `T${pad(date.getHours())}:${pad(date.getMinutes())}:00${sign}${hh}:${mm}`
+//             }
+
+//             return {
+//               current_datetime:      toLocalISO(now),
+//               current_datetime_human: now.toLocaleString('en-IN', {
+//                 timeZone: tz, weekday:'long', year:'numeric',
+//                 month:'long', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true
+//               }),
+//               tomorrow_date:         toLocalISO(tomorrow).slice(0, 10),
+//               day_after_tomorrow:    toLocalISO(dayAfter).slice(0, 10),
+//               timezone:              tzName,
+//               timezone_id:           tz,
+//               utc_offset:            toLocalISO(now).slice(-6),
+//               instruction: "When the user says 'today', 'tomorrow', or a time like '3pm', " +
+//                            "convert it to ISO 8601 format using the utc_offset provided. " +
+//                            "Always pass datetime to booking tools in ISO 8601 format with timezone offset."
+//             }
+//           })()
+//         }),
+//       })
+//       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+//       const data = await res.json()
+//       if (data.session_id) {
+//         sessionIdRef.current = data.session_id
+//         setSessionId(data.session_id)
+//         localStorage.setItem(SESSION_KEY, data.session_id)
+//       }
+//       if (data.title) setSessionTitle(data.title)
+
+//       const parsed = parseVaprEvents(data.response || [])
+//       setMessages(parsed)
+//     } catch (err) {
+//       setError(err.message)
+//       setMessages(prev => [
+//         ...prev.filter(m => m.id !== thinkId),
+//         { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+//       ])
+//     } finally {
+//       isLoadingRef.current = false
+//       setIsLoading(false)
+//     }
+//   }, [vaprUrl, token])
+
+//   // ── Load suggestions ─────────────────────────────────────────────────────────
+//   const loadSuggestions = useCallback(async (screen = 'home') => {
+//     try {
+//       const res = await fetch(`${vaprUrl}/get_suggestions`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({ current_screen: screen }),
+//       })
+//       if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+//     } catch {
+//       setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+//     }
+//   }, [vaprUrl, token])
+
+//   // ── Load chat history ────────────────────────────────────────────────────────
+//   const loadHistory = useCallback(async (sid) => {
+//     try {
+//       const res = await fetch(`${vaprUrl}/chat_history`, {
+//         method: 'POST',
+//         headers: makeHeaders(),
+//         body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+//       })
+//       if (res.ok) {
+//         const data = await res.json()
+//         const parsed = parseVaprEvents(data.events || [])
+//         if (parsed.length > 0) setMessages(parsed)
+//       }
+//     } catch (_) {}
+//   }, [vaprUrl, token])
+
+//   // ── New chat ─────────────────────────────────────────────────────────────────
+//   const newChat = useCallback(() => {
+//     const id = crypto.randomUUID()
+//     localStorage.setItem(SESSION_KEY, id)
+//     sessionIdRef.current = id
+//     setSessionId(id)
+//     setMessages([])
+//     setSessionTitle(null)
+//     setError(null)
+//   }, [])
+
+//   return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+//            sendMessage, loadSuggestions, loadHistory, newChat }
+// }
+export function useVapr({ vaprUrl, token }) {
+  const [messages,     setMessages]     = useState([])
+  const [suggestions,  setSuggestions]  = useState([])
+  const [isLoading,    setIsLoading]    = useState(false)
+  const [sessionId,    setSessionId]    = useState(getSessionId)
+  const [sessionTitle, setSessionTitle] = useState(null)
+  const [error,        setError]        = useState(null)
+
+  const isLoadingRef = useRef(false)
+  const sessionIdRef = useRef(sessionId)
+
+  function makeHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+  }
+
+  // ── Send message ─────────────────────────────────────────────────────────────
+  // const sendMessage = useCallback(async (text) => {
+  //   if (!text.trim() || isLoadingRef.current) return
+  //   isLoadingRef.current = true
+  //   setError(null)
+  //   setIsLoading(true)
+
+  //   const thinkId = `think-${Date.now()}`
+  //   const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+  //   setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+  //   const json= JSON.stringify({
+  //         query: text,
+  //         session_id: sessionIdRef.current,
+  //         extra: (() => {
+  //           const now = new Date()
+  //           const tz = getUserTimeZone()
+  //           const tzName = new Intl.DateTimeFormat('en-IN', {
+  //             timeZone: tz, timeZoneName: 'long'
+  //           }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value || tz
+
+  //           // Pre-compute tomorrow and day-after in ISO so agent doesn't need to calculate
+  //           const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1)
+  //           const dayAfter  = new Date(now); dayAfter.setDate(now.getDate() + 2)
+
+  //           // Helper: build ISO string for a given date at a given HH:MM in local tz
+  //           function toLocalISO(date) {
+  //             // Offset in minutes
+  //             const off = -date.getTimezoneOffset()
+  //             const sign = off >= 0 ? '+' : '-'
+  //             const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0')
+  //             const mm = String(Math.abs(off) % 60).padStart(2, '0')
+  //             const pad = n => String(n).padStart(2, '0')
+  //             return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}` +
+  //                    `T${pad(date.getHours())}:${pad(date.getMinutes())}:00${sign}${hh}:${mm}`
+  //           }
+
+  //           // Convert local time to UTC ISO (what create_appointment expects)
+  //           function toUTCISO(date) {
+  //             const pad = n => String(n).padStart(2, '0')
+  //             return `${date.getUTCFullYear()}-${pad(date.getUTCMonth()+1)}-${pad(date.getUTCDate())}` +
+  //                    `T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:00`
+  //           }
+
+  //           return {
+  //             // Human readable for display
+  //             current_datetime_human: now.toLocaleString('en-IN', {
+  //               timeZone: tz, weekday:'long', year:'numeric',
+  //               month:'long', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:true
+  //             }),
+  //             // UTC ISO — this is what create_appointment.startDateTime expects
+  //             current_datetime_utc:   toUTCISO(now),
+  //             tomorrow_date_utc:      toUTCISO(tomorrow).slice(0, 10),
+  //             day_after_tomorrow_utc: toUTCISO(dayAfter).slice(0, 10),
+  //             // Local info so agent can convert user's local time → UTC
+  //             timezone:               tzName,
+  //             timezone_id:            tz,
+  //             utc_offset:             toLocalISO(now).slice(-6),
+  //             instruction:
+  //               "Use the provided timezone information when interpreting relative dates and times from the user."
+  //           }
+  //         })()
+  //       })
+  //     console.log('Request payload:', json)
+  //   try {
+  //     const res = await fetch(`${vaprUrl}/vapr_agent`, {
+  //       method: 'POST',
+  //       headers: makeHeaders(),
+  //       body:json,
+  //     })
+  //     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+       
+  //     const data = await res.json()
+  //     if (data.session_id) {
+  //       sessionIdRef.current = data.session_id
+  //       setSessionId(data.session_id)
+  //       localStorage.setItem(SESSION_KEY, data.session_id)
+  //     }
+  //     if (data.title) setSessionTitle(data.title)
+
+  //     const parsed = parseVaprEvents(data.response || [])
+  //     setMessages(parsed)
+  //   } catch (err) {
+  //     setError(err.message)
+  //     setMessages(prev => [
+  //       ...prev.filter(m => m.id !== thinkId),
+  //       { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+  //     ])
+  //   } finally {
+  //     isLoadingRef.current = false
+  //     setIsLoading(false)
+  //   }
+  // }, [vaprUrl, token])
+
+
+  const sendMessage = useCallback(async (text) => {
+  if (!text.trim() || isLoadingRef.current) return
+  isLoadingRef.current = true
+  setError(null)
+  setIsLoading(true)
+
+  const thinkId = `think-${Date.now()}`
+  const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+  setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+  try {
+    const now = new Date()
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+    const res = await fetch(`${vaprUrl}/vapr_agent`, {
+      method: 'POST',
+      headers: makeHeaders(),
+      body: JSON.stringify({
+        query: text,
+        session_id: sessionIdRef.current,
+        extra: {
+          current_datetime: now.toLocaleString('en-IN', {
+            timeZone: tz,
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          }),
+          today_date_ist: now.toLocaleDateString('en-CA', { timeZone: tz }),
+          tomorrow_date_utc: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+            .toLocaleDateString('en-CA', { timeZone: tz }),
+          day_after_tomorrow_utc: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2)
+            .toLocaleDateString('en-CA', { timeZone: tz }),
+          timezone: tz,
+          utc_offset: (() => {
+            const off = -now.getTimezoneOffset()
+            const sign = off >= 0 ? '+' : '-'
+            const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0')
+            const mm = String(Math.abs(off) % 60).padStart(2, '0')
+            return `${sign}${hh}:${mm}`
+          })(),
+          date_iso: now.toISOString(),
+        }
+      }),
+    })
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+    const data = await res.json()
+    if (data.session_id) {
+      sessionIdRef.current = data.session_id
+      setSessionId(data.session_id)
+      localStorage.setItem(SESSION_KEY, data.session_id)
+    }
+    if (data.title) setSessionTitle(data.title)
+
+    const parsed = parseVaprEvents(data.response || [])
+    setMessages(parsed)
+  } catch (err) {
+    setError(err.message)
+    setMessages(prev => [
+      ...prev.filter(m => m.id !== thinkId),
+      { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+    ])
+  } finally {
+    isLoadingRef.current = false
+    setIsLoading(false)
+  }
+}, [vaprUrl, token])
+  // ── Load suggestions ─────────────────────────────────────────────────────────
+  const loadSuggestions = useCallback(async (screen = 'home') => {
+    try {
+      const res = await fetch(`${vaprUrl}/get_suggestions`, {
+        method: 'POST',
+        headers: makeHeaders(),
+        body: JSON.stringify({ current_screen: screen }),
+      })
+      if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+    } catch {
+      setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+    }
+  }, [vaprUrl, token])
+
+  // ── Load chat history ────────────────────────────────────────────────────────
+  const loadHistory = useCallback(async (sid) => {
+    try {
+      const res = await fetch(`${vaprUrl}/chat_history`, {
+        method: 'POST',
+        headers: makeHeaders(),
+        body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const parsed = parseVaprEvents(data.events || [])
+        if (parsed.length > 0) setMessages(parsed)
+      }
+    } catch (_) {}
+  }, [vaprUrl, token])
+
+  // ── New chat ─────────────────────────────────────────────────────────────────
+  const newChat = useCallback(() => {
+    const id = crypto.randomUUID()
+    localStorage.setItem(SESSION_KEY, id)
+    sessionIdRef.current = id
+    setSessionId(id)
+    setMessages([])
+    setSessionTitle(null)
+    setError(null)
+  }, [])
+
+  return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+           sendMessage, loadSuggestions, loadHistory, newChat }
+}
+
+
+// import { useState, useCallback, useRef } from 'react'
+
+// const SESSION_KEY = 'vapr_sid'
+
+function getSessionId() {
+  let id = localStorage.getItem(SESSION_KEY)
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
+  return id
+}
+
+// ── Parse Vapr events ─────────────────────────────────────────────────────────
+export function parseVaprEvents(events = []) {
+  const out = []
+  for (const raw of events) {
+    // /chat_history → { event_type, event_data:{...}, timestamp, agent }
+    // /vapr_agent   → flat { type, "User Request", ... }
+    const e     = raw.event_data || raw
+    const type  = raw.event_type || e.type
+    const ts    = raw.timestamp  || e.timestamp
+    // For agent field: prefer event_data.agent (actual responder) over top-level
+    const agent = e.agent || raw.agent
+
+    switch (type) {
+      case 'user_request':
+        out.push({ id: `${ts}-u`, role: 'user', content: e['User Request'], ts })
+        break
+
+      case 'tool_call':
+        out.push({ id: `${ts}-tc`, role: 'tool_call',
+          toolName: e['Tool Request Name'],
+          toolArgs: e['Tool Request Arguments'],
+          agent, ts })
+        break
+
+      case 'tool_response':
+        out.push({ id: `${ts}-tr`, role: 'tool_response',
+          toolResponse: e['Tool Response'], agent, ts })
+        break
+
+      case 'agent_response': {
+        // Use orchestrator responses only — they contain the final polished reply
+        // Sub-agents (booking_agent, condense_agent) have is_subagent: true
+        const isSubagent = e.is_subagent === true
+        if (!isSubagent) {
+          let text = e['Agent Response'] || ''
+          // Unwrap JSON-encoded string
+          try {
+            const t = text.trim()
+            if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
+          } catch (_) {}
+          // Normalise escaped newlines
+          text = text.replace(/\\n/g, '\n').trim()
+          if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
+        }
+        break
+      }
+
+      case 'error':
+        out.push({ id: `${ts}-err`, role: 'error', content: e.error, ts })
+        break
+    }
+  }
+
+  // Debug — remove after testing
+  console.log('[parseVaprEvents] input:', events.length, 'output:', out.length)
+  console.log('[parseVaprEvents] agent_responses:', events.filter(r => (r.event_type||r.type) === 'agent_response').map(r => ({
+    agent: (r.event_data||r).agent,
+    is_subagent: (r.event_data||r).is_subagent,
+    text: ((r.event_data||r)['Agent Response']||'').slice(0,60)
+  })))
+
+  return out
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
+export function useVapr({ vaprUrl, token }) {
+  const [messages,     setMessages]     = useState([])
+  const [suggestions,  setSuggestions]  = useState([])
+  const [isLoading,    setIsLoading]    = useState(false)
+  const [sessionId,    setSessionId]    = useState(getSessionId)
+  const [sessionTitle, setSessionTitle] = useState(null)
+  const [error,        setError]        = useState(null)
+
+  const isLoadingRef = useRef(false)
+  const sessionIdRef = useRef(sessionId)
+
+  function makeHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    }
+  }
+
+  // ── Send message ─────────────────────────────────────────────────────────────
+  const sendMessage = useCallback(async (text) => {
+    if (!text.trim() || isLoadingRef.current) return
+    isLoadingRef.current = true
+    setError(null)
+    setIsLoading(true)
+
+    const thinkId = `think-${Date.now()}`
+    const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text, ts: Date.now() / 1000 }
+    setMessages(prev => [...prev, userMsg, { id: thinkId, role: 'thinking' }])
+
+    try {
+      const res = await fetch(`${vaprUrl}/vapr_agent`, {
+        method: 'POST',
+        headers: makeHeaders(),
+        body: JSON.stringify({
+          query: text,
+          session_id: sessionIdRef.current,
+          extra: (() => {
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+            return {
+              current_datetime: new Date().toLocaleString('en-IN', {
+                timeZone: tz,
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+                // Add this inside the extra object in useVapr.js:
+today_date_ist: now.toLocaleDateString('en-CA', { timeZone: tz }),  // gives YYYY-MM-DD in IST
+              }),
+              today_date_ist: now.toLocaleDateString('en-CA', { timeZone: tz }),
+          tomorrow_date_utc: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+            .toLocaleDateString('en-CA', { timeZone: tz }),
+          day_after_tomorrow_utc: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2)
+            .toLocaleDateString('en-CA', { timeZone: tz }),
+          timezone: tz,
+              date_iso: new Date().toISOString(),
+            }
+          })()
+        }),
+      })
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+
+      const data = await res.json()
+      if (data.session_id) {
+        sessionIdRef.current = data.session_id
+        setSessionId(data.session_id)
+        localStorage.setItem(SESSION_KEY, data.session_id)
+      }
+      if (data.title) setSessionTitle(data.title)
+
+      const parsed = parseVaprEvents(data.response || [])
+      setMessages(parsed)
+    } catch (err) {
+      setError(err.message)
+      setMessages(prev => [
+        ...prev.filter(m => m.id !== thinkId),
+        { id: `err-${Date.now()}`, role: 'error', content: `Could not reach Vapr: ${err.message}`, ts: Date.now() / 1000 },
+      ])
+    } finally {
+      isLoadingRef.current = false
+      setIsLoading(false)
+    }
+  }, [vaprUrl, token])
+
+  // ── Load suggestions ─────────────────────────────────────────────────────────
+  const loadSuggestions = useCallback(async (screen = 'home') => {
+    try {
+      const res = await fetch(`${vaprUrl}/get_suggestions`, {
+        method: 'POST',
+        headers: makeHeaders(),
+        body: JSON.stringify({ current_screen: screen }),
+      })
+      if (res.ok) { const d = await res.json(); setSuggestions(d.suggestions || []) }
+    } catch {
+      setSuggestions(['What is Condense?', 'Build a data pipeline', 'Book a demo'])
+    }
+  }, [vaprUrl, token])
+
+  // ── Load chat history ────────────────────────────────────────────────────────
+  const loadHistory = useCallback(async (sid) => {
+    try {
+      const res = await fetch(`${vaprUrl}/chat_history`, {
+        method: 'POST',
+        headers: makeHeaders(),
+        body: JSON.stringify({ session_id: sid, user_id: 'None' }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const parsed = parseVaprEvents(data.events || [])
+        if (parsed.length > 0) setMessages(parsed)
+      }
+    } catch (_) {}
+  }, [vaprUrl, token])
+
+  // ── New chat ─────────────────────────────────────────────────────────────────
+  const newChat = useCallback(() => {
+    const id = crypto.randomUUID()
+    localStorage.setItem(SESSION_KEY, id)
+    sessionIdRef.current = id
+    setSessionId(id)
+    setMessages([])
+    setSessionTitle(null)
+    setError(null)
+  }, [])
+
+  return { messages, suggestions, isLoading, sessionId, sessionTitle, error,
+           sendMessage, loadSuggestions, loadHistory, newChat }
+}
