@@ -236,10 +236,35 @@ export function isSilentMessage(text) {
   return SILENT_PREFIXES.some(p => text.trim().startsWith(p))
 }
 
+function getGaClientId() {
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)_ga=([^;]*)/)
+    if (!match) return null
+    // GA format: GA1.X.<clientId> — drop the first two segments
+    const parts = decodeURIComponent(match[1]).split('.')
+    if (parts.length >= 4) return parts.slice(2).join('.')  // "741568552.1775107535"
+    return null
+  } catch {
+    return null
+  }
+}
+// function getSessionId() {
+//   let id = localStorage.getItem(SESSION_KEY)
+  
+//   if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
+//   return id
+// }
+
 
 function getSessionId() {
+  // Prefer GA client ID so returning users keep their history across devices/sessions
+  const gaId = getGaClientId()
+  if (gaId) {
+    localStorage.setItem(SESSION_KEY, gaId)   // keep in sync
+    return gaId
+  }
+  // Fall back to stored ID or generate a new one
   let id = localStorage.getItem(SESSION_KEY)
-  
   if (!id) { id = crypto.randomUUID(); localStorage.setItem(SESSION_KEY, id) }
   return id
 }
