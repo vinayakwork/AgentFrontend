@@ -619,10 +619,15 @@ const shouldAutoScrollRef = useRef(true)
     loadSuggestions('home')
   }, [sessionId])
 
-  useEffect(() => {
-    if (open) setTimeout(() => textareaRef.current?.focus(), 120)
-  }, [open])
-
+  // useEffect(() => {
+  //   if (open) setTimeout(() => textareaRef.current?.focus(), 120)
+  // }, [open])
+useEffect(() => {
+  if (open) {
+    shouldAutoScrollRef.current = true
+    setTimeout(() => textareaRef.current?.focus(), 120)
+  }
+}, [open])
   // useEffect(() => {
   //   messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   // }, [messages])
@@ -663,14 +668,23 @@ const shouldAutoScrollRef = useRef(true)
   shouldAutoScrollRef.current = distanceFromBottom < 80
 }
 
-  function handleSend() {
-    if (!input.trim() || isLoading) return
-    idleNudgeSent.current = false
-    resetIdleTimer()
-    sendMessage(input.trim())
-    setInput('')
-    if (textareaRef.current) textareaRef.current.style.height = 'auto'
-  }
+  // function handleSend() {
+  //   if (!input.trim() || isLoading) return
+  //   idleNudgeSent.current = false
+  //   resetIdleTimer()
+  //   sendMessage(input.trim())
+  //   setInput('')
+  //   if (textareaRef.current) textareaRef.current.style.height = 'auto'
+  // }
+function handleSend() {
+  if (!input.trim() || isLoading) return
+  shouldAutoScrollRef.current = true
+  idleNudgeSent.current = false
+  resetIdleTimer()
+  sendMessage(input.trim())
+  setInput('')
+  if (textareaRef.current) textareaRef.current.style.height = 'auto'
+}
 
   function handleKey(e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
