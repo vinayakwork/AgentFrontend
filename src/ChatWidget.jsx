@@ -595,8 +595,8 @@ import { IconChat, IconClose, IconNewChat, IconSend } from './components/Icons'
 const IDLE_TIMEOUT_MS = 3 * 60 * 1000
 
 export default function ChatWidget({
-  vaprUrl   = import.meta.env.VITE_VAPR_URL   || 'http://localhost:5000',
-  agentName = import.meta.env.VITE_AGENT_NAME || 'Vapr Assistant',
+  vaprUrl   = import.meta.env.VITE_VAPR_URL   ,
+  agentName = import.meta.env.VITE_AGENT_NAME ,
   token     = localStorage.getItem('vapr_token') || '',
 }) {
   const [open,  setOpen]  = useState(false)
