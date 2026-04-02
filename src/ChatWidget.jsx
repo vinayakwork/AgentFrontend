@@ -598,6 +598,7 @@ export default function ChatWidget({
   vaprUrl   = import.meta.env.VITE_VAPR_URL   ,
   agentName = import.meta.env.VITE_AGENT_NAME ,
   token     = localStorage.getItem('vapr_token') || '',
+  // mcpUrl    = import.meta.env.MCP_URL
 }) {
   const [open,  setOpen]  = useState(false)
   const [input, setInput] = useState('')
@@ -605,6 +606,8 @@ export default function ChatWidget({
   const textareaRef    = useRef(null)
   const idleTimerRef   = useRef(null)
   const idleNudgeSent  = useRef(false)
+ const messagesContainerRef = useRef(null)
+const shouldAutoScrollRef = useRef(true)
 
   const {
     messages, suggestions, isLoading,
@@ -620,9 +623,15 @@ export default function ChatWidget({
     if (open) setTimeout(() => textareaRef.current?.focus(), 120)
   }, [open])
 
+  // useEffect(() => {
+  //   messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  // }, [messages])
   useEffect(() => {
+  if (shouldAutoScrollRef.current) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }
+}, [messages])
+
 
   // ── Idle timer ──────────────────────────────────────────────────────────────
   const resetIdleTimer = useCallback(() => {
@@ -646,6 +655,13 @@ export default function ChatWidget({
     const last = messages[messages.length - 1]
     if (last?.role === 'user') { idleNudgeSent.current = false; resetIdleTimer() }
   }, [messages])
+ function handleMessagesScroll() {
+  const el = messagesContainerRef.current
+  if (!el) return
+
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  shouldAutoScrollRef.current = distanceFromBottom < 80
+}
 
   function handleSend() {
     if (!input.trim() || isLoading) return
@@ -707,7 +723,12 @@ export default function ChatWidget({
 
         {/* Messages or Welcome */}
         {messages.length > 0 ? (
-          <div className="flex-1 overflow-y-auto vw-scroll px-3.5 py-4 flex flex-col gap-3">
+          // <div className="flex-1 overflow-y-auto vw-scroll px-3.5 py-4 flex flex-col gap-3">
+          <div
+    ref={messagesContainerRef}
+    onScroll={handleMessagesScroll}
+    className="flex-1 overflow-y-auto vw-scroll px-3.5 py-4 flex flex-col gap-3"
+  >
             {grouped.map((g, i) => (
               <Message
                 key={i}
