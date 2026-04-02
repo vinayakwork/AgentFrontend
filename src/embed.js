@@ -7,7 +7,7 @@ const CONSENT_KEY = 'framerCookiesConsentMode'
  
 function isConsentGiven() {
   try {
-    localStorage.setItem(CONSENT_KEY)
+    // localStorage.setItem(CONSENT_KEY)
     const raw = localStorage.getItem(CONSENT_KEY)
     if (!raw) return false
     const consent = JSON.parse(raw)
