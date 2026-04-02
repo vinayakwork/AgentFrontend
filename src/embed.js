@@ -58,8 +58,8 @@ function mountWidget() {
     document.currentScript ||
     document.querySelector('script[data-vapr-url], script[src*="vapr-widget"]')
  
-  const vaprUrl   = script?.dataset?.vaprUrl   || 'http://localhost:5000'
-  const agentName = script?.dataset?.agentName || 'Vapr Assistant'
+  const vaprUrl   = script?.dataset?.vaprUrl   ;
+  const agentName = script?.dataset?.agentName ;
   const token     = script?.dataset?.token     || ''
  
   const host = document.createElement('div')
