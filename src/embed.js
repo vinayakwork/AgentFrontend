@@ -7,6 +7,7 @@ const CONSENT_KEY = 'framerCookiesConsentMode'
  
 function isConsentGiven() {
   try {
+    localStorage.setItem(CONSENT_KEY)
     const raw = localStorage.getItem(CONSENT_KEY)
     if (!raw) return false
     const consent = JSON.parse(raw)
@@ -53,7 +54,7 @@ function isConsentGiven() {
 function mountWidget() {
   // Don't mount twice
   if (document.getElementById('vapr-widget-host')) return
- 
+   
   const script =
     document.currentScript ||
     document.querySelector('script[data-vapr-url], script[src*="vapr-widget"]')
