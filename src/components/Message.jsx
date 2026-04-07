@@ -2243,6 +2243,9 @@ function extractSlots(text) {
   const intro = text.slice(0, m.index).trim()
   return { slots, intro }
 }
+function stripTimezoneLabel(slot) {
+  return slot.replace(/(AM|PM)\s+[A-Za-z][\w\s]*/gi, '$1').trim()
+}
 
 // ── Content parser ────────────────────────────────────────────────────────────
 // export function parseSpecialContent(content) {
@@ -2677,7 +2680,7 @@ async function handleSlotClick(slot) {
                   }}
                   onMouseEnter={e => { if (!selectedSlot) e.currentTarget.style.borderColor = '#2563eb' }}
                   onMouseLeave={e => { if (selectedSlot !== slot) e.currentTarget.style.borderColor = '#e5e7eb' }}
-                >{slot}</button>
+                >{stripTimezoneLabel(slot)}</button>
               ))}
             </div>
             {slotLoading && <p style={{ margin: '10px 0 0', color: '#6b7280', fontSize: 12 }}>Confirming your booking…</p>}
