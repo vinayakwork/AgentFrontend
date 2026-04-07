@@ -292,36 +292,36 @@ export function parseVaprEvents(events = []) {
   break
 
       }
-      case 'agent_response': {
-        if (e.is_subagent === true) break
-        let text = e['Agent Response'] || ''
-        try {
-          const t = text.trim()
-          if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
-        } catch (_) {}
-        text = text.replace(/\\n/g, '\n').trim()
-        if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
-        break
-      }
       // case 'agent_response': {
       //   if (e.is_subagent === true) break
       //   let text = e['Agent Response'] || ''
-        
       //   try {
       //     const t = text.trim()
       //     if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
       //   } catch (_) {}
-
-      //   // ─── DYNAMIC TIMEZONE REMOVAL START ───
-      //   // This regex looks for AM/PM and removes any letters/spaces following it
-      //   // works for "India Standard Time", "EST", "BST", etc.
-      //   text = text.replace(/(AM|PM)\s+([A-Za-z\s]+)(?=$|\n|")/g, '$1')
-      //   // ─── DYNAMIC TIMEZONE REMOVAL END ─────
-
       //   text = text.replace(/\\n/g, '\n').trim()
       //   if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
       //   break
       // }
+      case 'agent_response': {
+        if (e.is_subagent === true) break
+        let text = e['Agent Response'] || ''
+        
+        try {
+          const t = text.trim()
+          if (t.startsWith('"') && t.endsWith('"')) text = JSON.parse(t)
+        } catch (_) {}
+
+        // ─── DYNAMIC TIMEZONE REMOVAL START ───
+        // This regex looks for AM/PM and removes any letters/spaces following it
+        // works for "India Standard Time", "EST", "BST", etc.
+        text = text.replace(/(AM|PM)\s+([A-Za-z\s]+)(?=$|\n|")/g, '$1')
+        // ─── DYNAMIC TIMEZONE REMOVAL END ─────
+
+        text = text.replace(/\\n/g, '\n').trim()
+        if (text) out.push({ id: `${ts}-a`, role: 'assistant', content: text, ts })
+        break
+      }
       case 'error':
         out.push({ id: `${ts}-err`, role: 'error', content: e.error, ts })
         break
