@@ -769,6 +769,7 @@ function handleSend() {
             onChange={handleInput}
             onKeyDown={handleKey}
             disabled={isLoading}
+            maxLength={2000}
             placeholder="Ask anything about Condense…"
             className="flex-1 bg-[#1a1a26] border border-white/[0.08] rounded-[14px] px-3.5 py-2.5 text-[13px] text-[#e8e8f2] placeholder-white/25 resize-none overflow-hidden leading-relaxed outline-none focus:border-indigo-500/50 disabled:opacity-50 transition-colors duration-150 font-sans"
             style={{ maxHeight: 112 }}
