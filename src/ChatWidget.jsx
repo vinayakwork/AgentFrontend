@@ -691,7 +691,12 @@ function handleSend() {
   }
 
   function handleInput(e) {
-    setInput(e.target.value)
+    const value = e.target.value
+
+  // 🚫 HARD BLOCK at 2000 chars
+  if (value.length > 2000) 
+    return 'sorry only 2000 chars allowed'
+    setInput(value)
     e.target.style.height = 'auto'
     e.target.style.height = Math.min(e.target.scrollHeight, 112) + 'px'
     resetIdleTimer()
